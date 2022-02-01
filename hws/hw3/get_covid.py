@@ -1,12 +1,13 @@
-import numpy as np
 import re
 import logging
-import matplotlib.pyplot as plt
 import time
+import numpy as np
+import matplotlib.pyplot as plt
 import pandas as pd
 import geopandas as gpd
 import requests
 from shapely.geometry import shape
+from matplotlib.lines import Line2D
 
 logging.basicConfig(format="%(asctime)-15s %(message)s",
                     filename='covid_health_data.log',
@@ -15,19 +16,21 @@ URL = "https://healthdata.gov/resource/anag-cw7u.json"
 
 # If we want all the data
 OFFSET = 0
-record_cap = 50000
+RECORD_CAP = 50000
 start_time = time.time()
 dats = []
-while OFFSET < 1:
+
+while True:
     resp = requests.get(
         url=URL,
-        params={"$limit": record_cap, "$offset": OFFSET})
+        params={"$limit": RECORD_CAP, "$offset": OFFSET,
+                "$where": "collection_week > '2022-01-01T00:00:00'"})
     assert resp.status_code == 200
-    dat = pd.DataFrame(resp.json())
-    dats.append(dat)
-    if len(dat) < record_cap:
+    dat = resp.json()
+    dats.append(pd.DataFrame(dat))
+    if len(dat) < RECORD_CAP:
         break
-    OFFSET += record_cap
+    OFFSET += RECORD_CAP
     logging.info('offset is at %d', OFFSET)
     logging.info('time elapsed is %d seconds', (time.time() - start_time))
 
@@ -73,12 +76,25 @@ conus_gdf = gdf.loc[(gdf.bounds.minx >= conus.bounds.minx.min())
                     & (gdf.bounds.maxx <= conus.bounds.maxx.max())
                     & (gdf.bounds.maxy <= conus.bounds.maxy.max()),:]
 
+tot_max = conus_gdf.total_personnel_reported.max()
 markersize = 100 * (conus_gdf.total_personnel_reported
-                    / conus_gdf.total_personnel_reported.max())
-base = conus.plot(color='#AAAAAA')
-conus_gdf.plot(ax=base, marker='o', markersize=markersize,
-               cmap='Greens', c=conus_gdf.perc_unvax)
-plt.title('Unvaccinated hospital personnel on week {}'.format(target_week[:10]))
+                    / tot_max)
+fig, ax = plt.subplots(figsize=(10, 7))
+conus.plot(color='#AAAAAA', ax=ax)
+pts = conus_gdf.plot(ax=ax, marker='o', markersize=markersize,
+               cmap='Greens', column="perc_unvax", legend=True,
+               legend_kwds={'label': 'unvaccinated %'})
+pts.properties()
+legend_elements = [
+    Line2D([0], [0], marker='o', color='w', label=str(int(0.1 * tot_max)),
+           markersize=1),
+    Line2D([0], [0], marker='o', color='w', label=str(int(0.3 * tot_max)),
+           markersize=3),
+    Line2D([0], [0], marker='o', color='w', label=str(int(0.6 * tot_max)),
+           markersize=6)]
+ax.legend(handles=legend_elements, loc='lower right', title='total personnel reported')
+data_week = target_week[:10]
+plt.title(f'Percent unvaccinated hospital personnel on week {data_week}')
 plt.savefig('reproduce_unvaccinated.png')
 plt.close()
 
@@ -89,7 +105,7 @@ markersize = 100 * (conus_gdf.beds_to_staff_ratio
 base = conus.plot(color='#AAAAAA')
 conus_gdf.plot(ax=base, marker='o', markersize=markersize,
                color='green')
-plt.title('Total beds to staff ratio on week {}'.format(target_week[:10]))
+plt.title(f'Total beds to staff ratio on week {data_week}')
 plt.savefig('bed_to_staff_ratio.png')
 plt.close()
 

@@ -7,7 +7,6 @@ import pandas as pd
 import geopandas as gpd
 import requests
 from shapely.geometry import shape
-from matplotlib.lines import Line2D
 
 logging.basicConfig(format="%(asctime)-15s %(message)s",
                     filename='covid_health_data.log',
@@ -76,23 +75,22 @@ conus_gdf = gdf.loc[(gdf.bounds.minx >= conus.bounds.minx.min())
                     & (gdf.bounds.maxx <= conus.bounds.maxx.max())
                     & (gdf.bounds.maxy <= conus.bounds.maxy.max()),:]
 
+marker_legends = [1, 30, 60, 100]
 tot_max = conus_gdf.total_personnel_reported.max()
 markersize = 100 * (conus_gdf.total_personnel_reported
                     / tot_max)
+conus_gdf['total_reported'] = markersize
 fig, ax = plt.subplots(figsize=(10, 7))
-conus.plot(color='#AAAAAA', ax=ax)
-pts = conus_gdf.plot(ax=ax, marker='o', markersize=markersize,
+ax.set_facecolor('#AAAAAA')
+conus.plot(color='#444444', ax=ax)
+conus_gdf.plot(ax=ax, marker='o', markersize='total_reported',
                cmap='Greens', column="perc_unvax", legend=True,
                legend_kwds={'label': 'unvaccinated %'})
-pts.properties()
-legend_elements = [
-    Line2D([0], [0], marker='o', color='w', label=str(int(0.1 * tot_max)),
-           markersize=1),
-    Line2D([0], [0], marker='o', color='w', label=str(int(0.3 * tot_max)),
-           markersize=3),
-    Line2D([0], [0], marker='o', color='w', label=str(int(0.6 * tot_max)),
-           markersize=6)]
-ax.legend(handles=legend_elements, loc='lower right', title='total personnel reported')
+# Hack to get legends for marker size
+legends = [plt.scatter([], [], s=i, edgecolor=None, color='grey')
+           for i in marker_legends]
+plt.legend(legends, [round(tot_max * i / 100) for i in marker_legends],
+           loc='lower right', title='Total reported')
 data_week = target_week[:10]
 plt.title(f'Percent unvaccinated hospital personnel on week {data_week}')
 plt.savefig('reproduce_unvaccinated.png')

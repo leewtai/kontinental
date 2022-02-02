@@ -1,11 +1,15 @@
 import re
 import logging
 import time
+from datetime import datetime
+
 import numpy as np
 import matplotlib.pyplot as plt
 import pandas as pd
 import geopandas as gpd
 import requests
+import seaborn as sns
+from sklearn.linear_model import LinearRegression
 from shapely.geometry import shape
 
 logging.basicConfig(format="%(asctime)-15s %(message)s",
@@ -23,7 +27,7 @@ while True:
     resp = requests.get(
         url=URL,
         params={"$limit": RECORD_CAP, "$offset": OFFSET,
-                "$where": "collection_week > '2022-01-01T00:00:00'"})
+                "$where": "collection_week > '2021-10-01T00:00:00'"})
     assert resp.status_code == 200
     dat = resp.json()
     dats.append(pd.DataFrame(dat))
@@ -33,7 +37,7 @@ while True:
     logging.info('offset is at %d', OFFSET)
     logging.info('time elapsed is %d seconds', (time.time() - start_time))
 
-df = pd.concat(dats)
+df = pd.concat(dats).reset_index(drop=True)
 logging.info('pulled %d records from health.gov', df.shape[0])
 
 personnel_cols = [col for col in df.columns
@@ -97,23 +101,39 @@ plt.savefig('reproduce_unvaccinated.png')
 plt.close()
 
 
-not_inf = np.logical_not(np.isinf(conus_gdf.beds_to_staff_ratio))
-markersize = 100 * (conus_gdf.beds_to_staff_ratio
-                    / conus_gdf.beds_to_staff_ratio[not_inf].max())
-base = conus.plot(color='#AAAAAA')
-conus_gdf.plot(ax=base, marker='o', markersize=markersize,
-               color='green')
-plt.title(f'Total beds to staff ratio on week {data_week}')
-plt.savefig('bed_to_staff_ratio.png')
+# Calculate data quality measure
+df_grps = df.groupby('hhs_ids')
+target_vars = ['hhs_ids', 'collection_week',
+               'total_personnel', 'perc_unvax']
+
+
+def trend_seek(sers, time_stamps):
+    if sers.notna().sum() < 3:
+        return np.nan
+    dates = time_stamps.apply(lambda x: datetime.strptime(x[:10], "%Y-%m-%d"))
+    x_delt = dates.diff().view(int) / 60 / 60 / 24 / 1e9
+    x_delt.iloc[0] = 0
+    x = x_delt.cumsum().to_numpy().reshape((-1, 1))
+    mod = LinearRegression().fit(x[sers.notna(), :], sers[sers.notna()])
+    return mod.coef_[0]
+
+
+out = []
+for grp, inds in df_grps.groups.items():
+    sdf = df_grps.get_group(grp).loc[:, target_vars].sort_values('collection_week')
+    trend = trend_seek(sdf.perc_unvax, sdf.collection_week)
+    out.append({'hhs_id': grp, 'trend_coef': trend})
+
+trend_df = pd.DataFrame(out)
+
+
+# Look at things over time
+TARGET_STATE = "WY"
+sdf = df.loc[df.state == TARGET_STATE, ].copy()
+sdf['date'] = sdf.collection_week.apply(lambda x: pd.to_datetime(x[:10], format='%Y-%m-%d'))
+
+ax = sns.relplot(data=sdf, x='date', y='perc_unvax', units='hhs_ids', kind='line', estimator=None)
+ax.fig.suptitle(f'Unvaccinated Perc Trends in {TARGET_STATE}')
+ax.set(ylim=(0, 100))
+plt.savefig(f'{TARGET_STATE}_unvax_perc_ts.png')
 plt.close()
-
-
-
-# Group by the hospital id, see weekly data
-hos_grp = df.groupby('hhs_ids')
-
-TARGET = ''
-for grp, ind in hos_grp.groups.items():
-    # grp, ind = next(iter(hos_grp.groups.items()))
-    sdf = df.loc[ind, ['collection_week', TARGET, personnel_cols]]
-    sdf.sort_values('collection_week', inplace=True)
